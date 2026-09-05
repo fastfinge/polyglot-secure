@@ -78,3 +78,15 @@ def splitText(
 		return result
 
 	return _split(text, ["\n\n", "\n", ". ", "。", " ", ""])
+
+
+def isWorthTranslating(text: str) -> bool:
+	"""Return whether text holds anything a translation engine could act on.
+
+	A string made only of digits, punctuation, symbols, emoji, whitespace or any
+	mixture of those carries no words, so translating it can only return it
+	unchanged.  Some engines refuse it outright: Naver reports an error for a
+	string of digits.  Any letter in any script, Han and Hangul included, makes
+	the string worth sending.
+	"""
+	return any(character.isalpha() for character in text)

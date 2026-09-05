@@ -13,6 +13,7 @@ from logHandler import log
 from ..common import config
 from ..common.cache import TranslationCache
 from ..common.exceptions import EngineError
+from ..common.textUtils import isWorthTranslating
 from ..common import languages
 from ..common.wordDictionary import EnglishChineseDictionary, formatWordLookupResult
 from ..services import engineManager
@@ -289,6 +290,12 @@ class TranslationManager:
 	) -> None:
 		"""Start a translation using configured fallback, dictionary, and cache behavior."""
 		if not text or not text.strip():
+			if isManual:
+				cues.Speech.message(_("Nothing to translate"))
+			return
+		if not isWorthTranslating(text):
+			# Digits, punctuation and emoji have no words to translate, and some
+			# engines report an error rather than echoing them back.
 			if isManual:
 				cues.Speech.message(_("Nothing to translate"))
 			return

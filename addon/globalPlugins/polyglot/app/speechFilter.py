@@ -15,6 +15,7 @@ from speech.extensions import filter_speechSequence
 
 from ..common import cues
 from ..common import config
+from ..common.textUtils import isWorthTranslating
 from ..common.wordDictionary import (
 	EnglishChineseDictionary,
 	WordLookupResult,
@@ -548,6 +549,10 @@ class SpeechFilter:
 			return sequence
 		self.lastSpokenText = textToSave
 		if not self.manager.isAutoTranslateEnabled:
+			return sequence
+		# Digits, punctuation and emoji hold nothing to translate, and some engines
+		# reject them outright, so let the original speech through unchanged.
+		if not isWorthTranslating(textToSave):
 			return sequence
 		# To prevent translation loops, skip if the speech is already a translation result.
 		if self._isSpeakingTranslation:
