@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 
@@ -64,9 +65,18 @@ class CacheTestCase(unittest.TestCase):
 	def cachePath(self) -> Path:
 		return self.configPath / cacheModule.CACHE_FILENAME
 
+	@property
+	def legacyPath(self) -> Path:
+		return self.configPath / cacheModule.LEGACY_CACHE_FILENAME
+
+	def readCacheRecords(self) -> list[Any]:
+		"""Return the records on disk in the order they were written, superseded ones included."""
+		text = self.cachePath.read_text(encoding="utf-8")
+		return [json.loads(line) for line in text.splitlines() if line.strip()]
+
 	def readCacheFile(self) -> dict[str, str]:
-		"""Return what is on disk, which is not necessarily what is in memory yet."""
-		return json.loads(self.cachePath.read_text(encoding="utf-8"))
+		"""Return the entries on disk, which are not necessarily what is in memory yet."""
+		return dict(self.readCacheRecords())
 
 
 class EvictionTest(CacheTestCase):
@@ -110,7 +120,7 @@ class EvictionTest(CacheTestCase):
 
 
 class BatchedWritingTest(CacheTestCase):
-	"""Check that a run of translations does not rewrite the whole file once per translation."""
+	"""Check that a run of translations does not write to the disk once per translation."""
 
 	def test_storingDoesNotWriteStraightAway(self) -> None:
 		"""Auto-translation stores constantly, so a store must not reach the disk on its own."""
@@ -130,14 +140,14 @@ class BatchedWritingTest(CacheTestCase):
 		"""Changes made close together are gathered up and written once."""
 		cache = self.makeCache(saveInterval=0.2)
 		writes: list[str] = []
-		realWriteFile = cache._writeFile
+		realAppendFile = cache._appendFile
 
-		def recordingWriteFile(contents: str) -> None:
+		def recordingAppendFile(contents: str) -> None:
 			# Recorded once the write is finished, so a recorded write is one the file already holds.
-			realWriteFile(contents)
+			realAppendFile(contents)
 			writes.append(contents)
 
-		with patch.object(cache, "_writeFile", recordingWriteFile):
+		with patch.object(cache, "_appendFile", recordingAppendFile):
 			for index in range(20):
 				cache.set(f"key{index}", f"value{index}")
 			deadline = time.monotonic() + 5.0
@@ -160,21 +170,115 @@ class BatchedWritingTest(CacheTestCase):
 		self.assertFalse(self.cachePath.exists())
 
 
+class AppendOnlyWritingTest(CacheTestCase):
+	"""Check that writing costs what changed rather than everything ever cached."""
+
+	def test_aWriteOnlyAddsWhatChanged(self) -> None:
+		"""The point of the log: a new translation must not rewrite the ones already written."""
+		cache = self.makeCache()
+		for index in range(5):
+			cache.set(f"key{index}", f"value{index}")
+		cache.terminate()
+		later = self.makeCache()
+		with patch.object(later, "_writeFile") as writeFile:
+			later.set("late", "value")
+			later.terminate()
+		writeFile.assert_not_called()
+		records = self.readCacheRecords()
+		self.assertEqual(len(records), 6, "the entries already on disk should not have been written again")
+		self.assertEqual(records[-1], ["late", "value"])
+
+	def test_theLastRecordForAKeyIsTheOneThatCounts(self) -> None:
+		"""Storing over an entry appends rather than going back to change what was written."""
+		cache = self.makeCache()
+		cache.set("key", "first")
+		cache.set("key", "second")
+		cache.terminate()
+		self.assertEqual(self.readCacheRecords(), [["key", "first"], ["key", "second"]])
+		self.assertEqual(self.makeCache().get("key"), "second")
+
+	def test_aTranslationWithLineBreaksStaysOnOneLine(self) -> None:
+		"""A record has to be one line, whatever was in the text that was translated.
+
+		U+2028 and U+2029 are in here because JSON does not escape them and real text does contain
+		them: a record holding one would otherwise look like two lines to much of what might read it.
+		"""
+		translation = "first line\nsecond line\r\n\u2028 and \u2029 third"
+		cache = self.makeCache()
+		cache.set("key", translation)
+		cache.terminate()
+		self.assertEqual(len(self.cachePath.read_text(encoding="utf-8").splitlines()), 1)
+		self.assertEqual(self.makeCache().get("key"), translation)
+
+
+class CompactionTest(CacheTestCase):
+	"""Check that the file is rewritten once it is mostly records that have been superseded."""
+
+	def test_aFileOfSupersededRecordsIsRewritten(self) -> None:
+		"""Appending alone would grow the file without limit however few entries are really kept."""
+		cache = self.makeCache(maxSize=3)
+		with patch.object(cacheModule, "_COMPACTION_MINIMUM", 4):
+			for index in range(10):
+				cache.set("key", f"value{index}")
+			cache.terminate()
+		self.assertEqual(self.readCacheRecords(), [["key", "value9"]])
+
+	def test_evictedEntriesGoWhenTheFileIsRewritten(self) -> None:
+		"""An evicted entry stays on the disk until then, and must not still be there after."""
+		cache = self.makeCache(maxSize=2)
+		with patch.object(cacheModule, "_COMPACTION_MINIMUM", 3):
+			for key in ("a", "b", "c", "d", "e", "f"):
+				cache.set(key, key.upper())
+			cache.terminate()
+		self.assertEqual(self.readCacheFile(), {"e": "E", "f": "F"})
+
+	def test_aFileThatIsMostlyLiveEntriesIsNotRewritten(self) -> None:
+		"""Rewriting reclaims disk, so doing it when there is none to reclaim is pure cost."""
+		cache = self.makeCache()
+		for index in range(20):
+			cache.set(f"key{index}", f"value{index}")
+		with patch.object(cache, "_writeFile") as writeFile:
+			cache.terminate()
+		writeFile.assert_not_called()
+		self.assertEqual(len(self.readCacheFile()), 20)
+
+	def test_rewritingPutsReadRecencyOnTheDisk(self) -> None:
+		"""Reads reorder only memory, so a rewrite is where that ordering reaches the disk."""
+		cache = self.makeCache(maxSize=3)
+		with patch.object(cacheModule, "_COMPACTION_MINIMUM", 3):
+			for key in ("a", "b", "c"):
+				cache.set(key, key.upper())
+			for index in range(4):
+				cache.set("filler", f"value{index}")
+			# 'b' is the oldest of what is still cached, and reading it makes it the most recent.
+			_unused = cache.get("b")
+			cache.terminate()
+		self.assertEqual([record[0] for record in self.readCacheRecords()], ["c", "filler", "b"])
+
+
 class PersistenceTest(CacheTestCase):
 	"""Check what survives a restart, and what a damaged file costs."""
 
-	def test_entriesComeBackInRecencyOrder(self) -> None:
+	def test_entriesComeBackInTheOrderTheyWereWritten(self) -> None:
 		"""The order written is the order eviction will use after a restart."""
 		cache = self.makeCache()
 		for key in ("a", "b", "c"):
 			cache.set(key, key.upper())
-		_unused = cache.get("a")
 		cache.terminate()
 		reloaded = self.makeCache(maxSize=3)
-		self.assertEqual(list(reloaded._cache), ["b", "c", "a"])
+		self.assertEqual(list(reloaded._cache), ["a", "b", "c"])
 		reloaded.set("d", "D")
-		self.assertIsNone(reloaded.get("b"), "the oldest entry from the previous session goes first")
-		self.assertEqual(reloaded.get("a"), "A")
+		self.assertIsNone(reloaded.get("a"), "the oldest entry from the previous session goes first")
+		self.assertEqual(reloaded.get("b"), "B")
+
+	def test_aFileOverTheLimitIsTrimmedAsItIsRead(self) -> None:
+		"""The file holds what an earlier session kept, which need not be what this one will."""
+		records = "".join(f'["key{index}", "value{index}"]\n' for index in range(10))
+		self.cachePath.write_text(records, encoding="utf-8")
+		cache = self.makeCache(maxSize=4)
+		self.assertEqual(cache.getItemCount(), 4)
+		self.assertEqual(cache.get("key9"), "value9", "the most recent entries are the ones kept")
+		self.assertIsNone(cache.get("key0"))
 
 	def test_anUnreadableCacheStartsEmpty(self) -> None:
 		"""The cache is disposable, so damage to it costs misses rather than an error."""
@@ -182,26 +286,46 @@ class PersistenceTest(CacheTestCase):
 		cache = self.makeCache()
 		self.assertEqual(cache.getItemCount(), 0)
 
-	def test_aCacheOfTheWrongShapeStartsEmpty(self) -> None:
-		"""A file holding something other than an object of translations is not usable."""
-		self.cachePath.write_text('["not", "an", "object"]', encoding="utf-8")
+	def test_aRecordOfTheWrongShapeIsDropped(self) -> None:
+		"""A line holding something other than a key and a translation is not usable."""
+		self.cachePath.write_text('["not", "a", "pair"]\n{"key": "value"}\n', encoding="utf-8")
 		cache = self.makeCache()
 		self.assertEqual(cache.getItemCount(), 0)
 
 	def test_entriesThatAreNotTranslationsAreDropped(self) -> None:
 		"""A hand-edited file must not put values into the cache that cannot be spoken."""
-		self.cachePath.write_text('{"good": "value", "bad": 42, "worse": null}', encoding="utf-8")
+		self.cachePath.write_text(
+			'["good", "value"]\n["bad", 42]\n["worse", null]\n[7, "key is not text"]\n',
+			encoding="utf-8",
+		)
 		cache = self.makeCache()
 		self.assertEqual(cache.getItemCount(), 1)
 		self.assertEqual(cache.get("good"), "value")
 
-	def test_aFailedWriteLeavesTheOldCacheIntact(self) -> None:
-		"""A cache is replaced in one step, so an interrupted write cannot destroy the last one."""
+	def test_aDamagedRecordDoesNotCostTheGoodOnes(self) -> None:
+		"""One unreadable line is one cache miss, not a cache thrown away."""
+		self.cachePath.write_text('["a", "A"]\nnot json at all\n["b", "B"]\n', encoding="utf-8")
+		cache = self.makeCache()
+		self.assertEqual(cache.getItemCount(), 2)
+		self.assertEqual(cache.get("b"), "B")
+
+	def test_aDamagedFileIsRewrittenRatherThanAddedTo(self) -> None:
+		"""A record cut short by a crash would swallow the next one appended after it."""
+		self.cachePath.write_text('["good", "value"]\n["cut", "sh', encoding="utf-8")
+		cache = self.makeCache()
+		cache.set("new", "entry")
+		cache.terminate()
+		self.assertEqual(self.readCacheFile(), {"good": "value", "new": "entry"})
+
+	def test_aFailedRewriteLeavesTheOldCacheIntact(self) -> None:
+		"""A rewrite is put in place in one step, so an interrupted one cannot destroy the last."""
 		cache = self.makeCache()
 		cache.set("first", "value")
 		cache.terminate()
 		later = self.makeCache()
 		later.set("second", "value")
+		with later._lock:
+			later._needsCompaction = True
 		with patch.object(cacheModule.os, "replace", side_effect=OSError("disk full")):
 			later.terminate()
 		self.assertEqual(self.readCacheFile(), {"first": "value"})
@@ -209,6 +333,68 @@ class PersistenceTest(CacheTestCase):
 			(self.configPath / (cacheModule.CACHE_FILENAME + ".tmp")).exists(),
 			"a failed write should not leave its half-written file behind",
 		)
+
+	def test_aFailedAppendIsWrittenAgainFromMemory(self) -> None:
+		"""An append that failed part-way cannot be retried: the file may hold half of it already."""
+		cache = self.makeCache()
+		cache.set("first", "value")
+		with patch.object(cache, "_appendFile", side_effect=OSError("disk full")):
+			self.assertFalse(cache._flush())
+		cache.set("second", "value")
+		with patch.object(cache, "_appendFile", side_effect=AssertionError("should have rewritten")):
+			cache.terminate()
+		self.assertEqual(self.readCacheFile(), {"first": "value", "second": "value"})
+
+
+class LegacyMigrationTest(CacheTestCase):
+	"""Check the take-over of a cache written by a version that kept it as one JSON document."""
+
+	def test_aCacheFromThePreviousFormatIsTakenOver(self) -> None:
+		"""An upgrade should not cost the user everything already translated."""
+		self.legacyPath.write_text('{"a": "A", "b": "B"}', encoding="utf-8")
+		cache = self.makeCache()
+		self.assertEqual(cache.getItemCount(), 2)
+		self.assertEqual(cache.get("a"), "A")
+		self.assertEqual(self.readCacheFile(), {"a": "A", "b": "B"})
+
+	def test_thePreviousFileIsRemovedOnceItsEntriesAreSafe(self) -> None:
+		"""It is a plaintext record of what NVDA has spoken, and nothing else would remove it."""
+		self.legacyPath.write_text('{"a": "A"}', encoding="utf-8")
+		_unused = self.makeCache()
+		self.assertFalse(self.legacyPath.exists())
+
+	def test_thePreviousFileIsKeptWhenItsEntriesCannotBeWritten(self) -> None:
+		"""Removing it before its entries are safely elsewhere would throw them away."""
+		self.legacyPath.write_text('{"a": "A"}', encoding="utf-8")
+		with patch.object(cacheModule.os, "replace", side_effect=OSError("disk full")):
+			cache = self.makeCache()
+		self.assertEqual(cache.get("a"), "A")
+		self.assertTrue(self.legacyPath.exists())
+
+	def test_thePreviousFileGoesWhenTheNewOneIsAlreadyInUse(self) -> None:
+		"""Once the cache is being kept in the new file, the old one is only left over."""
+		self.legacyPath.write_text('{"old": "value"}', encoding="utf-8")
+		self.cachePath.write_text('["new", "value"]\n', encoding="utf-8")
+		cache = self.makeCache()
+		self.assertEqual(cache.getItemCount(), 1)
+		self.assertEqual(cache.get("new"), "value")
+		self.assertFalse(self.legacyPath.exists())
+
+	def test_anUnreadablePreviousCacheCostsNothingButMisses(self) -> None:
+		"""A damaged old file cannot be used, and leaving it about would help nobody."""
+		self.legacyPath.write_text("{ this is not json", encoding="utf-8")
+		cache = self.makeCache()
+		self.assertEqual(cache.getItemCount(), 0)
+		self.assertFalse(self.legacyPath.exists())
+
+	def test_aPreviousCacheOverTheLimitIsTrimmed(self) -> None:
+		"""The old file was written under whatever limit that version had, not this one."""
+		entries = {f"key{index}": f"value{index}" for index in range(10)}
+		self.legacyPath.write_text(json.dumps(entries), encoding="utf-8")
+		cache = self.makeCache(maxSize=4)
+		self.assertEqual(cache.getItemCount(), 4)
+		self.assertEqual(len(self.readCacheFile()), 4)
+		self.assertEqual(cache.get("key9"), "value9", "the most recent entries are the ones kept")
 
 
 class ClearTest(CacheTestCase):
@@ -222,7 +408,7 @@ class ClearTest(CacheTestCase):
 		later = self.makeCache()
 		self.assertEqual(later.getItemCount(), 1)
 		later.clear()
-		self.assertEqual(self.readCacheFile(), {})
+		self.assertEqual(self.readCacheRecords(), [])
 		self.assertEqual(later.getItemCount(), 0)
 
 	def test_clearingSurvivesARestart(self) -> None:
@@ -305,9 +491,15 @@ class DeleteCacheFileTest(CacheTestCase):
 	def test_aHalfWrittenCacheIsRemovedToo(self) -> None:
 		"""An interrupted write can leave a temporary file, which holds translations just the same."""
 		temporaryPath = self.configPath / (cacheModule.CACHE_FILENAME + ".tmp")
-		temporaryPath.write_text('{"key": "value"}', encoding="utf-8")
+		temporaryPath.write_text('["key", "value"]\n', encoding="utf-8")
 		self.assertTrue(cacheModule.deleteCacheFile())
 		self.assertFalse(temporaryPath.exists())
+
+	def test_theFileFromThePreviousFormatIsRemovedToo(self) -> None:
+		"""A cache left by an older version holds the same kind of content and goes the same way."""
+		self.legacyPath.write_text('{"key": "value"}', encoding="utf-8")
+		self.assertTrue(cacheModule.deleteCacheFile())
+		self.assertFalse(self.legacyPath.exists())
 
 	def test_removingWhatIsNotThereIsNotAFailure(self) -> None:
 		"""A user who never translated anything has no cache, which is not a problem."""

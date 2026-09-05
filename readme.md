@@ -164,7 +164,9 @@ Upgrading from Polyglot 1.2.0 or earlier moves any keys already saved in `nvda.i
 
 ### The Translation Cache
 
-Polyglot remembers the translations it has already made, so repeating a request does not cost another one. The cache is kept in `translation_cache.json` in your NVDA configuration directory and holds up to 10,000 entries, the least recently used being dropped to make room. Entries are stored under a hash of the language pair and the source text, so the file records the translated text but not a readable copy of the original.
+Polyglot remembers the translations it has already made, so repeating a request does not cost another one. The cache is kept in `translation_cache.jsonl` in your NVDA configuration directory and holds up to 50,000 entries, the least recently used being dropped to make room. Entries are stored under a hash of the language pair and the source text, so the file records the translated text but not a readable copy of the original.
+
+The file is a list of entries, one to a line, and a new translation is added to the end of it rather than the whole file being written out again. Polyglot rewrites it from scratch only once it holds about twice as many lines as there are entries, which is also when superseded and dropped entries stop taking up room in it. A cache left by Polyglot 1.2.1 or earlier, in `translation_cache.json`, is taken over the first time this version starts, and the old file is then deleted.
 
 Be aware of what this means: with auto-translation on, the cache accumulates translations of much of what NVDA speaks, and it is a plain file that anything running under your Windows account can read. It is not encrypted. Encrypting it would not change much, because the key would have to be available to Polyglot and therefore to anything else running in NVDA. If that matters to you, press `Clear Cache` in Polyglot's settings, which empties the file straight away.
 
