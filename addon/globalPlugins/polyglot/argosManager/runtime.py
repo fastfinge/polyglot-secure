@@ -32,6 +32,7 @@ from typing import Any
 import addonHandler
 from logHandler import log
 
+from ..common.secureScreen import SecureScreenError, isSecureScreen
 from ..modelManager.installer import (
 	InstallProgress,
 	ProgressCallback,
@@ -254,7 +255,10 @@ class ArgosRuntime:
 
 		:param withBpeSupport: Also install the extras a BPE-tokenized package needs.
 		:raises RuntimeError: If the runtime cannot run on this NVDA.
+		:raises SecureScreenError: If NVDA is on a secure screen, where nothing may be downloaded.
 		"""
+		if isSecureScreen():
+			raise SecureScreenError()
 		if not self.isHostSupported:
 			raise RuntimeError(self.unsupportedHostMessage)
 		needed = self.components + (self.bpeComponents if withBpeSupport else ())

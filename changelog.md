@@ -26,6 +26,7 @@ routes through infrastructure the fork has no right to use.
 - The translation cache is now written a few seconds after it changes rather than on every translation. With auto-translation on, Polyglot used to rewrite the whole cache file for every phrase NVDA spoke; it now gathers those changes and writes them once, and writes whatever is still pending when NVDA exits.
 - The translation cache now discards the entries you have used least recently rather than the ones stored longest ago, so a phrase you keep meeting stays cached.
 - The translation cache is now replaced in a single step and is safe to use from several translations at once, so an interrupted write or two results arriving together can no longer damage it.
+- The offline model downloaders no longer run on secure screens. NVDA is the system account on the sign-in screen, the lock screen, and UAC prompts, so anything downloaded there is written into that account's profile, out of reach of the models you installed and of the model managers that could remove them. Argos now says it cannot translate on those screens instead of offering a download, and ChromeAI leaves any model download to Chrome, as it does when you decline Polyglot's own installer.
 
 ### 1.2.1
 

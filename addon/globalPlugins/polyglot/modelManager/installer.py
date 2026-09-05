@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 import addonHandler
 import requests
 
+from ..common.secureScreen import SecureScreenError, isSecureScreen
 from .catalog import ArchiveRef, ModelCatalog, ModelPackage, RuntimeEntry, pairDisplayName
 
 addonHandler.initTranslation()
@@ -173,7 +174,12 @@ class ModelInstaller:
 		packages: list[ModelPackage],
 		progress: ProgressCallback,
 	) -> None:
-		"""Install one or more packages while preserving other complete catalog packages."""
+		"""Install one or more packages while preserving other complete catalog packages.
+
+		:raises SecureScreenError: If NVDA is on a secure screen, where models must not be downloaded.
+		"""
+		if isSecureScreen():
+			raise SecureScreenError()
 		selectedKeys = self.getInstalledPackageKeys(catalog)
 		for package in packages:
 			selectedKeys.add(package.key)
@@ -457,7 +463,15 @@ def archiveFileName(path: str) -> str:
 
 
 def downloadFile(url: str, destination: Path, expectedSize: int, progress: ProgressCallback) -> None:
-	"""Download a file to a temporary path and atomically replace the destination."""
+	"""Download a file to a temporary path and atomically replace the destination.
+
+	Every model download Polyglot makes, for ChromeAI and for Argos alike, goes through here, so
+	this is where a secure screen is refused no matter which caller asked for the file.
+
+	:raises SecureScreenError: If NVDA is on a secure screen.
+	"""
+	if isSecureScreen():
+		raise SecureScreenError()
 	destination.parent.mkdir(parents=True, exist_ok=True)
 	tempPath = Path(str(destination) + ".download")
 	try:

@@ -132,3 +132,32 @@ def installNvdaStubs(projectRoot: Path) -> ModuleType:
 		# NVDA's addonHandler.initTranslation installs the translation lookup as a builtin.
 		setattr(builtins, "_", lambda message: message)
 	return sys.modules["config"]
+
+
+def installGuiStubs() -> None:
+	"""Register stand-ins for the NVDA and wxPython modules the user-facing services import.
+
+	Only enough of each is provided for the modules to import: a check that reaches the real
+	dialogs would be driving wxPython, which cannot run here. Whichever stub is already
+	registered is kept, so this can be called alongside the other stub installation.
+	"""
+	for name in ("wx", "queueHandler", "nvwave", "tones", "ui"):
+		_unused = sys.modules.setdefault(name, ModuleType(name))
+	gui = sys.modules.setdefault("gui", ModuleType("gui"))
+	guiMessage = sys.modules.setdefault("gui.message", ModuleType("gui.message"))
+	guiHelper = sys.modules.setdefault("gui.guiHelper", ModuleType("gui.guiHelper"))
+	setattr(gui, "message", guiMessage)
+	setattr(gui, "guiHelper", guiHelper)
+	setattr(gui, "mainFrame", Mock())
+	setattr(gui, "messageBox", Mock())
+	setattr(guiMessage, "MessageDialog", Mock())
+	setattr(guiMessage, "ReturnCode", Mock())
+	setattr(guiMessage, "DefaultButtonSet", Mock())
+	setattr(guiHelper, "wxCallOnMain", Mock())
+	wx = sys.modules["wx"]
+	for name, value in (("OK", 4), ("ICON_ERROR", 512), ("ICON_INFORMATION", 2048)):
+		setattr(wx, name, value)
+	setattr(wx, "CallAfter", Mock())
+	queueHandler = sys.modules["queueHandler"]
+	setattr(queueHandler, "queueFunction", Mock())
+	setattr(queueHandler, "eventQueue", Mock())

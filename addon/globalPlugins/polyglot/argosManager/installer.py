@@ -26,6 +26,7 @@ import addonHandler
 import requests
 from logHandler import log
 
+from ..common.secureScreen import SecureScreenError, isSecureScreen
 from ..modelManager.installer import (
 	InstallProgress,
 	ProgressCallback,
@@ -226,7 +227,12 @@ class ArgosInstaller:
 		packages: list[ArgosPackage],
 		progress: ProgressCallback,
 	) -> None:
-		"""Install the runtime and the given packages, leaving everything else alone."""
+		"""Install the runtime and the given packages, leaving everything else alone.
+
+		:raises SecureScreenError: If NVDA is on a secure screen, where models must not be downloaded.
+		"""
+		if isSecureScreen():
+			raise SecureScreenError()
 		self.packagesDir.mkdir(parents=True, exist_ok=True)
 		self.runtime.install(progress, withBpeSupport=self.needsBpeSupport())
 		installedByKey = self.getInstalledByKey()

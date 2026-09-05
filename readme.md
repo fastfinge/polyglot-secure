@@ -257,6 +257,7 @@ When NVDA exits, Polyglot closes the Chrome instance it started.
 - Chrome AI requires an explicit source language; `Auto-detect` is not available for this engine.
 - First use requires Chrome to download the model, which may be affected by network conditions.
 - If the Translator API is unavailable, update Chrome or make sure the related Chrome feature is enabled.
+- On a secure screen, such as the sign-in screen, the lock screen, or a UAC prompt, Polyglot's model manager installs nothing: NVDA runs there as the system account, so a downloaded model would land in that account's profile rather than yours. Model downloads on those screens are left to Chrome, as they are when you decline Polyglot's own installer.
 
 ## Argos Translate Offline Translation
 
@@ -306,6 +307,7 @@ Like the Chrome AI models, Argos models are not deleted when the add-on is unins
 - A loaded model keeps its files open. Press `Unload models` in the model manager before removing or updating a direction you have just used.
 - The runtime libraries stay loaded until NVDA restarts, so removing the runtime itself only takes effect after a restart.
 - Translation quality is below that of the online engines, and long passages take noticeably longer than a network round trip.
+- Models cannot be downloaded or installed on a secure screen, such as the sign-in screen, the lock screen, or a UAC prompt: NVDA runs there as the system account, which reaches neither your models nor a profile you could remove them from. Argos reports that it cannot translate on those screens, so use an online engine there.
 
 ## LibreTranslate
 

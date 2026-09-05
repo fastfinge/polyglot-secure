@@ -19,6 +19,7 @@ from ...argosManager.catalog import normalizeLanguageCode
 from ...argosManager.service import getArgosService
 from ...common import languages
 from ...common.exceptions import EngineError, SilentTranslationCancel
+from ...common.secureScreen import SecureScreenError
 from ..engine import ChunkedTranslationMixin
 
 addonHandler.initTranslation()
@@ -150,11 +151,16 @@ class ArgosTranslateEngine(ChunkedTranslationMixin):
 	def _ensureModelsReady(self, langFrom: str, langTo: str) -> None:
 		"""Prompt for any model this direction needs and is missing.
 
+		:raises EngineError: If the model check failed, or NVDA is on a secure screen, where models
+			cannot be downloaded.
 		:raises SilentTranslationCancel: If the user chose not to download it.
 		"""
 		service = getArgosService()
 		try:
 			shouldContinue = service.ensureModelsForPairInteractive(langFrom, langTo)
+		except SecureScreenError as error:
+			# Already a finished sentence for the user, so it is reported as it stands.
+			raise EngineError(str(error)) from error
 		except Exception as error:
 			log.error("Argos: the model check failed.", exc_info=True)
 			raise EngineError(_("Argos Translate error: ") + str(error)) from error

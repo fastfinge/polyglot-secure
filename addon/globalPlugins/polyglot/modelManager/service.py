@@ -20,6 +20,7 @@ from gui.guiHelper import wxCallOnMain
 from logHandler import log
 
 from ..common import cues
+from ..common.secureScreen import isSecureScreen
 from .catalog import ModelCatalog, ModelPackage, pairDisplayName
 from .installer import (
 	MODEL_OPERATION_LOCK,
@@ -117,7 +118,14 @@ class ModelManagerService:
 
 		Returns True when translation should continue. Returns False when the user cancelled
 		or the native install path failed after user-visible feedback.
+
+		On a secure screen the native installer is skipped entirely: NVDA is the system account there,
+		so a download would land in a profile the user cannot reach. Chrome is left to supply the model
+		as it does when the user declines the native install, rather than the translation being refused.
 		"""
+		if isSecureScreen():
+			log.debug("Chrome AI: on a secure screen, leaving any model download to Chrome.")
+			return True
 		required = self.findRequiredPackages(sourceLanguage, targetLanguage)
 		if required is None:
 			return True

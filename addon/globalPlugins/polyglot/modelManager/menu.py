@@ -12,6 +12,7 @@ import addonHandler
 import gui
 import wx
 
+from ..common.secureScreen import isSecureScreen, secureScreenDownloadMessage
 from .dialog import ModelManagerDialog
 
 addonHandler.initTranslation()
@@ -23,6 +24,15 @@ _dialog: ModelManagerDialog | None = None
 def openModelManagerDialog() -> None:
 	"""Open the model manager dialog or focus the existing instance."""
 	global _dialog
+	if isSecureScreen():
+		# The menu item is not there on a secure screen, so this is only reached by another
+		# caller; the dialog installs models, which must not happen as the system account.
+		gui.messageBox(
+			secureScreenDownloadMessage(),
+			_("Polyglot ChromeAI Model Manager"),
+			wx.OK | wx.ICON_INFORMATION,
+		)
+		return
 	if _dialog is not None:
 		try:
 			if _dialog.IsShown():
@@ -59,8 +69,13 @@ def closeModelManagerDialog() -> None:
 		_dialog = None
 
 
-def bindToolsMenu(handler: Any) -> wx.MenuItem:
-	"""Create the Tools menu item for opening the model manager."""
+def bindToolsMenu(handler: Any) -> wx.MenuItem | None:
+	"""Create the Tools menu item for opening the model manager.
+
+	:return: The new menu item, or None on a secure screen, where models cannot be installed.
+	"""
+	if isSecureScreen():
+		return None
 	item = gui.mainFrame.sysTrayIcon.toolsMenu.Append(
 		wx.ID_ANY,
 		_("Polyglot ChromeAI model manager"),

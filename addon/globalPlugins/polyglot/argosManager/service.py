@@ -19,6 +19,7 @@ from gui.guiHelper import wxCallOnMain
 from logHandler import log
 
 from ..common import cues
+from ..common.secureScreen import SecureScreenError, isSecureScreen
 from ..modelManager.installer import InstallProgress, isFileInUseFailure
 from .catalog import ArgosCatalog, ArgosPackage, pairDisplayName
 from .installer import ARGOS_OPERATION_LOCK, ArgosInstaller, formatFileInUseFailure
@@ -116,7 +117,12 @@ class ArgosService:
 
 		:return: True when translation should go ahead, False when the user cancelled or the
 			install failed after the user was told about it.
+		:raises SecureScreenError: If NVDA is on a secure screen. Nothing may be downloaded there, and
+			the models the user installed are in their own profile, out of reach of the system account,
+			so there is nothing to fall back on either.
 		"""
+		if isSecureScreen():
+			raise SecureScreenError()
 		if not self.installer.runtime.isHostSupported:
 			self._showMessage(self.installer.runtime.unsupportedHostMessage, wx.ICON_ERROR)
 			return False
