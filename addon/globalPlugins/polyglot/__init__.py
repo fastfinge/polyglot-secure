@@ -187,23 +187,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		if not globalVars.appArgs.secure:
 			gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(settings.TranslationSettingsPanel)
 			self.modelManagerMenuItem = modelManagerMenu.bindToolsMenu(self)
-<<<<<<< HEAD
 			self.argosManagerMenuItem = argosManagerMenu.bindToolsMenu(self)
-
-	def terminate(self):
-		"""Unregister Polyglot UI and speech integrations and release resources."""
-=======
-		config.post_configProfileSwitch.register(self._migrateStoredSecrets)
-		config.post_configReset.register(self._migrateStoredSecrets)
 		inputCore.decide_executeGesture.register(self._decideExecuteGesture)
 
 	def terminate(self):
 		"""Unregister Polyglot UI and speech integrations and release resources."""
 		inputCore.decide_executeGesture.unregister(self._decideExecuteGesture)
 		self._finishLayer()
-		config.post_configProfileSwitch.unregister(self._migrateStoredSecrets)
-		config.post_configReset.unregister(self._migrateStoredSecrets)
->>>>>>> 713a5b6 (Improve command layer interaction)
 		self.manager.terminateAllTasks()
 		# After the tasks, so translations they were still caching are written out with the rest.
 		self.manager.cache.terminate()
@@ -228,19 +218,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		"""Open the native ChromeAI model manager from NVDA's Tools menu."""
 		modelManagerMenu.openModelManagerDialog()
 
-<<<<<<< HEAD
 	def onOpenArgosModelManager(self, event: wx.CommandEvent) -> None:
 		"""Open the Argos Translate model manager from NVDA's Tools menu."""
 		argosManagerMenu.openModelManagerDialog()
 
-	def getScript(self, gesture: "inputCore.InputGesture") -> None:
-		"""Resolve gestures through the command layer while it is active."""
-		if not self.isLayerActive:
-			return super().getScript(gesture)
-		script = super().getScript(gesture)
-		if not script:
-			script = self._handleLayerError
-=======
 	def _decideExecuteGesture(self, gesture: inputCore.InputGesture) -> bool:
 		"""Leave the command layer before an unrelated gesture is resolved."""
 		if shouldExitLayer(
@@ -251,7 +232,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		):
 			self._finishLayer()
 		return True
->>>>>>> 713a5b6 (Improve command layer interaction)
 
 	def _finishLayer(self) -> None:
 		"""Leave the command layer and remove its temporary gesture bindings."""

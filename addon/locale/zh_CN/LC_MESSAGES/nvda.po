@@ -38,8 +38,7 @@ msgstr "命令层。按 H 查看帮助。"
 msgid "Exit the translation command layer."
 msgstr "退出翻译命令层。"
 
-#: addon\globalPlugins\polyglot\__init__.py:172
->>>>>>> 713a5b6 (Improve command layer interaction)
+#: addon\globalPlugins\polyglot\__init__.py:168
 msgid "Nothing selected"
 msgstr "未选择任何内容"
 
